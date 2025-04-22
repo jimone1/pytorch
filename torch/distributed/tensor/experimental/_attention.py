@@ -19,6 +19,7 @@ from torch import nn
 from torch.distributed.device_mesh import DeviceMesh
 from torch.distributed.tensor import distribute_module, DTensor, Replicate, Shard
 from torch.distributed.tensor.parallel.style import ParallelStyle
+from torch.overrides import TorchFunctionMode
 
 
 __all__ = ["context_parallel", "set_rotate_method"]
@@ -37,6 +38,15 @@ class _RotateMethod(Enum):
 
 aten = torch.ops.aten
 logger = logging.getLogger(__name__)
+
+
+class _DispatchMode(Enum):
+    MONEKY_PATCHING = auto()
+    TORCH_FUNTION = auto()
+    TORCH_DISPATCH = auto()
+
+
+_dispatch_mode: _DispatchMode = _DispatchMode.MONEKY_PATCHING
 
 
 @dataclass
@@ -1170,18 +1180,65 @@ def _context_parallel(seq_dim: int, mesh: DeviceMesh) -> Generator[None, None, N
     # Currently we use monkey patch to replace scaled_dot_product_attention with the
     # wrapped fn. This is okay if users do `import torch.nn.functional` but will not
     # work if users do `import torch.nn.functional.scaled_dot_product_attention`.
-    _distribute_function(
-        F.scaled_dot_product_attention,
-        F,
-        mesh,
-        attention_input_fn,
-        attention_output_fn,
-    )
 
-    with _enable_cp_dispatcher():
-        yield
+    class DistributeFunction(TorchFunctionMode):
+        def __init__(
+            self,
+            fn: Callable,
+            device_mesh: DeviceMesh,
+            input_fn: Optional[Callable],
+            output_fn: Optional[Callable],
+        ):
+            self._device_mesh = device_mesh
+            self._input_fn = input_fn
+            self._output_fn = output_fn
+            self._fn = fn
 
-    _restore_function(F.scaled_dot_product_attention, F)
+        def __torch_function__(
+            self,
+            func: Callable,
+            types: Any,
+            args: tuple[Any, ...] = (),
+            kwargs: Optional[dict[str, Any]] = None,
+        ):
+            if kwargs is None:
+                kwargs = {}
+
+            if func != self._fn:
+                return func(*args, **kwargs)
+
+            if self._input_fn is not None:
+                args, kwargs = self._input_fn(self._device_mesh, *args, **kwargs)
+            output = func(*args, **kwargs)
+            if self._output_fn is not None:
+                try:
+                    output = self._output_fn(self._device_mesh, output)
+                except Exception as e:
+                    raise Exception(f"{func} {output}")
+            return output
+
+    if _dispatch_mode == _DispatchMode.MONEKY_PATCHING:
+        _distribute_function(
+            F.scaled_dot_product_attention,
+            F,
+            mesh,
+            attention_input_fn,
+            attention_output_fn,
+        )
+        with _enable_cp_dispatcher():
+            yield
+        _restore_function(F.scaled_dot_product_attention, F)
+    elif _dispatch_mode == _DispatchMode.TORCH_FUNTION:
+        with DistributeFunction(
+            F.scaled_dot_product_attention,
+            mesh,
+            attention_input_fn,
+            attention_output_fn,
+        ):
+            with _enable_cp_dispatcher():
+                yield
+    else:
+        raise NotImplementedError("torch dispatch mode is not supported yet.")
 
 
 class _LoadBalancer(ABC):
@@ -1237,9 +1294,9 @@ class _RoundRobinLoadBalancer(_LoadBalancer):
     def shard(
         cls, buffer: torch.Tensor, mesh: DeviceMesh, seq_dim: int
     ) -> torch.Tensor:
-        assert cls.ROUND_ROBIN_CYCLE == 2, (
-            "The current implementation only works if ROUND_ROBIN_CYCLE is 2."
-        )
+        assert (
+            cls.ROUND_ROBIN_CYCLE == 2
+        ), "The current implementation only works if ROUND_ROBIN_CYCLE is 2."
         cp_world_size = mesh.size()
         cp_rank = mesh.get_local_rank()
         assert buffer.size()[seq_dim] % (cp_world_size * 2) == 0
@@ -1253,9 +1310,9 @@ class _RoundRobinLoadBalancer(_LoadBalancer):
     def unshard(
         cls, buffer: torch.Tensor, mesh: DeviceMesh, seq_dim: int
     ) -> torch.Tensor:
-        assert cls.ROUND_ROBIN_CYCLE == 2, (
-            "The current implementation only works if ROUND_ROBIN_CYCLE is 2."
-        )
+        assert (
+            cls.ROUND_ROBIN_CYCLE == 2
+        ), "The current implementation only works if ROUND_ROBIN_CYCLE is 2."
         buffer = buffer.contiguous()
         cp_world_size = mesh.size()
 
