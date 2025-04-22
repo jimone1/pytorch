@@ -14,8 +14,10 @@ fi
 
 if [[ "$DESIRED_CUDA" == 'xpu' ]]; then
     export USE_SCCACHE=0
-    export XPU_VERSION=2025.0
-    export XPU_ENABLE_KINETO=1
+    export XPU_VERSION=2025.1
+    # Need kineto upgrade
+    export USE_KINETO=0
+    export XPU_ENABLE_KINETO=0
 fi
 
 echo "Free space on filesystem before build:"
