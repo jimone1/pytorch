@@ -1,3 +1,6 @@
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif // USE_CUDA
 #include <nlohmann/json.hpp>
 #include <fstream>
 #include <iostream>
@@ -585,6 +588,9 @@ OSSProxyExecutor::OSSProxyExecutor(
     device_ = std::make_unique<c10::Device>(c10::DeviceType::CPU);
   } else {
     int device_idx = -1;
+#ifdef USE_CUDA
+    cudaGetDevice(&device_idx);
+#endif // USE_CUDA
     device_ = std::make_unique<c10::Device>(c10::DeviceType::CUDA, device_idx);
   }
 
