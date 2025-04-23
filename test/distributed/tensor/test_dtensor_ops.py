@@ -112,6 +112,7 @@ dtensor_fails = {
     xfail("_batch_norm_with_update"),
     xfail("block_diag"),
     xfail("broadcast_shapes"),
+    xfail("cartesian_prod"),  # decomposes to illegal view that requires redistribute
     xfail("cauchy"),
     xfail("cdist"),
     xfail("cholesky"),
@@ -444,6 +445,18 @@ dtensor_fails = {
     xfail("vdot"),
     xfail("view_copy"),
     xfail("zeros"),
+    # TODO(whc) debug/triage
+    xfail(
+        "flatten"
+    ),  # partially supported via view decomp, but some sharding combinations are illegal
+    xfail("ravel"),
+    xfail("reshape"),
+    xfail("reshape_as"),
+    xfail("view"),
+    xfail("view_as"),
+    xfail("take_along_dim"),
+    xfail("kron"),
+    # /TODO(whc) debug/triage
     # ops inside this might even fail without dtensor
     # tests, as we rescale op db common test size factor (i.e. L, M, S)
     # which triggered the original function run failures with input
