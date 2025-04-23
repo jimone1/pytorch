@@ -2679,6 +2679,19 @@ class CheckFunctionManager:
                     assert isinstance(name, str)
                     used_global_vars.add(name)
 
+            def normalize_create_fn(x):
+                if isinstance(x, functools.partial):
+                    _ref = (
+                        lambda x: x()
+                        if isinstance(x, (TensorWeakRef, weakref.ref))
+                        else x
+                    )
+                    new_args = tuple(_ref(a) for a in x.args)
+                    new_keywords = {k: _ref(v) for k, v in x.keywords.items()}
+                    return functools.partial(x.func, *new_args, **new_keywords)
+
+                return x
+
             output_graph_guards_state = dataclasses.replace(
                 output_graph_guards_state,
                 global_scope={
@@ -2692,7 +2705,7 @@ class CheckFunctionManager:
                             guard,
                             obj_weakref=None,
                             guarded_class_weakref=None,
-                            create_fn=guard.inner_create_fn(),
+                            create_fn=normalize_create_fn(guard.create_fn),
                         )
                         for guard in sorted_guards
                     }
