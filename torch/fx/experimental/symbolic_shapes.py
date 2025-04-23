@@ -1547,6 +1547,11 @@ def expect_true(
             if frame is None:
                 break
             frame = frame.f_back
+        if isinstance(a.node, torch._C._SymNode):
+            return a.node.expect_true(
+                frame.f_code.co_filename if frame else "",
+                frame.f_lineo if frame else 0,
+            )
         return a.node.expect_true(
             frame.f_code.co_filename if frame else "",
             frame.f_lineno if frame else 0,
